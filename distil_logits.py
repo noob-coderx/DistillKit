@@ -74,7 +74,7 @@ def sharegpt_format(example):
                     message.append({"role": "user", "content": conversation.get('value', '')})
                 elif conversation.get('from') == 'gpt':
                     message.append({"role": "assistant", "content": conversation.get('value', '')})
-                elif conversation.get('from'] == 'system':
+                elif conversation.get('from') == 'system':
                     message.insert(0, {"role": "system", "content": conversation.get('value', '')})
 
     if not any(msg.get('role') == 'system' for msg in message):
