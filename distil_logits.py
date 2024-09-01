@@ -13,7 +13,6 @@ config = {
     "dataset": {
         "name": "mlabonne/FineTome-100k",
         "split": "train",
-        # "num_samples": , # You can pass a number here to limit the number of samples to use.
         "seed": 42
     },
     "models": {
@@ -35,7 +34,7 @@ config = {
         "weight_decay": 0.05,
         "warmup_ratio": 0.1,
         "lr_scheduler_type": "cosine",
-        "resume_from_checkpoint": None,  # Set to a path or True to resume from the latest checkpoint
+        "resume_from_checkpoint": None,
         "fp16": False,
         "bf16": True
     },
@@ -46,9 +45,6 @@ config = {
     "model_config": {
         "use_flash_attention": True
     }
-    # "spectrum": {
-    #     "layers_to_unfreeze": "/workspace/spectrum/snr_results_Qwen-Qwen2-1.5B_unfrozenparameters_50percent.yaml" # You can pass a spectrum yaml file here to freeze layers identified by spectrum.
-    # }
 }
 
 # Set up environment
@@ -59,8 +55,6 @@ device = accelerator.device
 # Load and preprocess dataset
 dataset = load_dataset(config["dataset"]["name"], split=config["dataset"]["split"])
 dataset = dataset.shuffle(seed=config["dataset"]["seed"])
-if "num_samples" in config["dataset"]:
-    dataset = dataset.select(range(config["dataset"]["num_samples"]))
 
 # Load tokenizers
 teacher_tokenizer = AutoTokenizer.from_pretrained(config["models"]["teacher"])
@@ -72,7 +66,7 @@ student_tokenizer.chat_template = config["tokenizer"]["chat_template"]
 def sharegpt_format(example):
     conversations = example['conversations']
     message = []
-    
+
     if isinstance(conversations, list):
         for conversation in conversations:
             if isinstance(conversation, dict):
@@ -122,7 +116,6 @@ if "spectrum" in config and "layers_to_unfreeze" in config["spectrum"]:
             else:
                 param.requires_grad = True
 
-    # Apply freezing to student model
     freeze_student_spectrum(student_model, config["spectrum"]["layers_to_unfreeze"])
 else:
     print("Spectrum configuration not found. All layers of the student model will be trainable.")
@@ -139,7 +132,7 @@ class LogitsTrainer(SFTTrainer):
     def compute_loss(self, model, inputs, return_outputs=False):
         inputs = {k: v.to(model.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
         self.teacher_model = self.teacher_model.to(model.device)
-        
+
         student_model = model.module if hasattr(model, 'module') else model
         teacher_model = self.teacher_model.module if hasattr(self.teacher_model, 'module') else self.teacher_model
 
@@ -152,7 +145,7 @@ class LogitsTrainer(SFTTrainer):
 
     def distillation_loss(self, student_logits, teacher_logits, inputs, original_loss):
         student_logits, teacher_logits = pad_logits(student_logits.to(self.model.device), teacher_logits.to(self.model.device))
-        
+
         student_logits_scaled = student_logits / config["distillation"]["temperature"]
         teacher_logits_scaled = teacher_logits / config["distillation"]["temperature"]
 
@@ -164,17 +157,24 @@ class LogitsTrainer(SFTTrainer):
 
         return config["distillation"]["alpha"] * loss_kd + (1 - config["distillation"]["alpha"]) * original_loss
 
+# Define SFT configuration
+sft_config = SFTConfig(
+    max_seq_length=config["tokenizer"]["max_length"],
+    packing=False,
+    dataset_text_field="text",  # Specify the field in the dataset that contains text data
+)
+
 # Training arguments
 training_arguments = TrainingArguments(**config["training"])
 
-# Create the custom SFT Trainer
+# Create the custom SFT Trainer with the SFTConfig
 trainer = LogitsTrainer(
     model=student_model,
     train_dataset=tokenized_dataset["train"],
     eval_dataset=tokenized_dataset["test"],
     tokenizer=student_tokenizer,
     args=training_arguments,
-    max_seq_length=config["tokenizer"]["max_length"],
+    config=sft_config,  # Pass the SFTConfig object here
 )
 
 # Add the teacher model to the trainer
