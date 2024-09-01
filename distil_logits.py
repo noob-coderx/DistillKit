@@ -74,7 +74,7 @@ def sharegpt_format(example):
                     message.append({"role": "user", "content": conversation.get('value', '')})
                 elif conversation.get('from') == 'gpt':
                     message.append({"role": "assistant", "content": conversation.get('value', '')})
-                elif conversation.get('from') == 'system':
+                elif conversation.get('from'] == 'system':
                     message.insert(0, {"role": "system", "content": conversation.get('value', '')})
 
     if not any(msg.get('role') == 'system' for msg in message):
@@ -157,11 +157,12 @@ class LogitsTrainer(SFTTrainer):
 
         return config["distillation"]["alpha"] * loss_kd + (1 - config["distillation"]["alpha"]) * original_loss
 
-# Define SFT configuration
+# Define SFT configuration with required output directory
 sft_config = SFTConfig(
+    output_dir=config["training"]["output_dir"],  # Provide the output directory required by SFTConfig
     max_seq_length=config["tokenizer"]["max_length"],
     packing=False,
-    dataset_text_field="text",  # Specify the field in the dataset that contains text data
+    dataset_text_field="text",
 )
 
 # Training arguments
@@ -174,7 +175,7 @@ trainer = LogitsTrainer(
     eval_dataset=tokenized_dataset["test"],
     tokenizer=student_tokenizer,
     args=training_arguments,
-    config=sft_config,  # Pass the SFTConfig object here
+    config=sft_config,
 )
 
 # Add the teacher model to the trainer
