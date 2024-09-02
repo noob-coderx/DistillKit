@@ -11,45 +11,42 @@ import yaml
 config = {
     "project_name": "distil-logits",
     "dataset": {
-        "name": "mlabonne/FineTome-100k",
-        "split": "train",
-        # "num_samples": , # You can pass a number here to limit the number of samples to use.
-        "seed": 42
+        "name": "mlabonne/FineTome-100k",  # Dataset to be used for distillation
+        "split": "train",                   # Use the training split
+        "seed": 42                          # Random seed for reproducibility
     },
     "models": {
-        "teacher": "bert-base-uncased",
-        "student": "bert-small-uncased"
+        "teacher": "bert-base-uncased",     # Teacher model (BERT)
+        "student": "distilbert-base-uncased"     # Hypothetical student model (replace with an actual smaller BERT model)
     },
     "tokenizer": {
-        "max_length": 512,
+        "max_length": 512,                  # Maximum token length suitable for BERT
         "chat_template": "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
     },
     "training": {
-        "output_dir": "./results",
-        "num_train_epochs": 3,
-        "per_device_train_batch_size": 1,
-        "gradient_accumulation_steps": 8,
-        "save_steps": 1000,
-        "logging_steps": 1,
-        "learning_rate": 2e-5,
-        "weight_decay": 0.05,
-        "warmup_ratio": 0.1,
-        "lr_scheduler_type": "cosine",
-        "resume_from_checkpoint": None,  # Set to a path or True to resume from the latest checkpoint
-        "fp16": False,
-        "bf16": True
+        "output_dir": "./results",           # Output directory to save results
+        "num_train_epochs": 3,               # Number of training epochs
+        "per_device_train_batch_size": 4,    # Batch size per device (adjust based on GPU memory)
+        "gradient_accumulation_steps": 8,    # Accumulate gradients to simulate larger batch sizes
+        "save_steps": 1000,                  # Steps interval for saving the model
+        "logging_steps": 10,                 # Logging interval
+        "learning_rate": 5e-5,               # Learning rate (adjust as needed)
+        "weight_decay": 0.01,                # Weight decay for regularization
+        "warmup_ratio": 0.1,                 # Warmup ratio for learning rate scheduler
+        "lr_scheduler_type": "linear",       # Type of learning rate scheduler
+        "resume_from_checkpoint": None,      # Resume training from checkpoint (if any)
+        "fp16": True,                        # Mixed precision training (use fp16 if GPU supports it)
+        "bf16": False                        # Turn off bf16 since fp16 is used
     },
     "distillation": {
-        "temperature": 2.0,
-        "alpha": 0.5
+        "temperature": 2.0,                  # Temperature parameter for distillation
+        "alpha": 0.5                         # Weighting between the original and distillation losses
     },
     "model_config": {
-        "use_flash_attention": False
+        "use_flash_attention": False         # BERT typically does not use Flash Attention
     }
-    # "spectrum": {
-    #     "layers_to_unfreeze": "/workspace/spectrum/snr_results_Qwen-Qwen2-1.5B_unfrozenparameters_50percent.yaml" # You can pass a spectrum yaml file here to freeze layers identified by spectrum.
-    # }
 }
+
 
 # Set up environment
 os.environ['WANDB_PROJECT'] = config["project_name"]
