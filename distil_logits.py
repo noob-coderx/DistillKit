@@ -49,6 +49,7 @@ config = {
 
 # Set up environment
 os.environ['WANDB_PROJECT'] = config["project_name"]
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'  # To avoid fragmentation
 accelerator = Accelerator()
 device = accelerator.device
 
@@ -96,13 +97,26 @@ tokenized_dataset = tokenized_dataset.train_test_split(test_size=0.1)
 
 print("Dataset preparation complete. Loading models...")
 
-# Load models with configurable flash attention
+# Load models with configurable flash attention and move to CPU initially
 model_kwargs = {"torch_dtype": torch.bfloat16}
 if config["model_config"]["use_flash_attention"]:
     model_kwargs["attn_implementation"] = "flash_attention_2"
 
 teacher_model = AutoModelForCausalLM.from_pretrained(config["models"]["teacher"], **model_kwargs)
 student_model = AutoModelForCausalLM.from_pretrained(config["models"]["student"], **model_kwargs)
+
+# Move models to the appropriate device, handling memory carefully
+if torch.cuda.is_available():
+    try:
+        teacher_model = teacher_model.to('cuda')
+        student_model = student_model.to('cuda')
+    except torch.cuda.OutOfMemoryError:
+        print("CUDA out of memory during model initialization. Trying memory management settings...")
+        torch.cuda.empty_cache()  # Clear unused memory
+        teacher_model = teacher_model.to('cuda')
+        student_model = student_model.to('cuda')
+else:
+    print("CUDA is not available. Please check your GPU setup.")
 
 # Optionally freeze layers of the student model based on spectrum configuration
 if "spectrum" in config and "layers_to_unfreeze" in config["spectrum"]:
