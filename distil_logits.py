@@ -13,14 +13,15 @@ config = {
     "dataset": {
         "name": "mlabonne/FineTome-100k",
         "split": "train",
+        # "num_samples": , # You can pass a number here to limit the number of samples to use.
         "seed": 42
     },
     "models": {
-        "teacher": "arcee-ai/Arcee-Spark",
-        "student": "Qwen/Qwen2-1.5B"
+        "teacher": "bert-base-uncased",
+        "student": "bert-small-uncased"
     },
     "tokenizer": {
-        "max_length": 4096,
+        "max_length": 512,
         "chat_template": "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
     },
     "training": {
@@ -34,7 +35,7 @@ config = {
         "weight_decay": 0.05,
         "warmup_ratio": 0.1,
         "lr_scheduler_type": "cosine",
-        "resume_from_checkpoint": None,
+        "resume_from_checkpoint": None,  # Set to a path or True to resume from the latest checkpoint
         "fp16": False,
         "bf16": True
     },
@@ -43,19 +44,23 @@ config = {
         "alpha": 0.5
     },
     "model_config": {
-        "use_flash_attention": True
+        "use_flash_attention": False
     }
+    # "spectrum": {
+    #     "layers_to_unfreeze": "/workspace/spectrum/snr_results_Qwen-Qwen2-1.5B_unfrozenparameters_50percent.yaml" # You can pass a spectrum yaml file here to freeze layers identified by spectrum.
+    # }
 }
 
 # Set up environment
 os.environ['WANDB_PROJECT'] = config["project_name"]
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'  # To avoid fragmentation
 accelerator = Accelerator()
 device = accelerator.device
 
 # Load and preprocess dataset
 dataset = load_dataset(config["dataset"]["name"], split=config["dataset"]["split"])
 dataset = dataset.shuffle(seed=config["dataset"]["seed"])
+if "num_samples" in config["dataset"]:
+    dataset = dataset.select(range(config["dataset"]["num_samples"]))
 
 # Load tokenizers
 teacher_tokenizer = AutoTokenizer.from_pretrained(config["models"]["teacher"])
@@ -67,7 +72,7 @@ student_tokenizer.chat_template = config["tokenizer"]["chat_template"]
 def sharegpt_format(example):
     conversations = example['conversations']
     message = []
-
+    
     if isinstance(conversations, list):
         for conversation in conversations:
             if isinstance(conversation, dict):
@@ -97,26 +102,13 @@ tokenized_dataset = tokenized_dataset.train_test_split(test_size=0.1)
 
 print("Dataset preparation complete. Loading models...")
 
-# Load models with configurable flash attention and move to CPU initially
+# Load models with configurable flash attention
 model_kwargs = {"torch_dtype": torch.bfloat16}
 if config["model_config"]["use_flash_attention"]:
     model_kwargs["attn_implementation"] = "flash_attention_2"
 
 teacher_model = AutoModelForCausalLM.from_pretrained(config["models"]["teacher"], **model_kwargs)
 student_model = AutoModelForCausalLM.from_pretrained(config["models"]["student"], **model_kwargs)
-
-# Move models to the appropriate device, handling memory carefully
-if torch.cuda.is_available():
-    try:
-        teacher_model = teacher_model.to('cuda')
-        student_model = student_model.to('cuda')
-    except torch.cuda.OutOfMemoryError:
-        print("CUDA out of memory during model initialization. Trying memory management settings...")
-        torch.cuda.empty_cache()  # Clear unused memory
-        teacher_model = teacher_model.to('cuda')
-        student_model = student_model.to('cuda')
-else:
-    print("CUDA is not available. Please check your GPU setup.")
 
 # Optionally freeze layers of the student model based on spectrum configuration
 if "spectrum" in config and "layers_to_unfreeze" in config["spectrum"]:
@@ -130,6 +122,7 @@ if "spectrum" in config and "layers_to_unfreeze" in config["spectrum"]:
             else:
                 param.requires_grad = True
 
+    # Apply freezing to student model
     freeze_student_spectrum(student_model, config["spectrum"]["layers_to_unfreeze"])
 else:
     print("Spectrum configuration not found. All layers of the student model will be trainable.")
@@ -146,7 +139,7 @@ class LogitsTrainer(SFTTrainer):
     def compute_loss(self, model, inputs, return_outputs=False):
         inputs = {k: v.to(model.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
         self.teacher_model = self.teacher_model.to(model.device)
-
+        
         student_model = model.module if hasattr(model, 'module') else model
         teacher_model = self.teacher_model.module if hasattr(self.teacher_model, 'module') else self.teacher_model
 
@@ -159,7 +152,7 @@ class LogitsTrainer(SFTTrainer):
 
     def distillation_loss(self, student_logits, teacher_logits, inputs, original_loss):
         student_logits, teacher_logits = pad_logits(student_logits.to(self.model.device), teacher_logits.to(self.model.device))
-
+        
         student_logits_scaled = student_logits / config["distillation"]["temperature"]
         teacher_logits_scaled = teacher_logits / config["distillation"]["temperature"]
 
@@ -171,25 +164,17 @@ class LogitsTrainer(SFTTrainer):
 
         return config["distillation"]["alpha"] * loss_kd + (1 - config["distillation"]["alpha"]) * original_loss
 
-# Define SFT configuration with required output directory
-sft_config = SFTConfig(
-    output_dir=config["training"]["output_dir"],  # Provide the output directory required by SFTConfig
-    max_seq_length=config["tokenizer"]["max_length"],
-    packing=False,
-    dataset_text_field="text",
-)
-
 # Training arguments
 training_arguments = TrainingArguments(**config["training"])
 
-# Create the custom SFT Trainer with the SFTConfig
+# Create the custom SFT Trainer
 trainer = LogitsTrainer(
     model=student_model,
     train_dataset=tokenized_dataset["train"],
     eval_dataset=tokenized_dataset["test"],
     tokenizer=student_tokenizer,
     args=training_arguments,
-    config=sft_config,
+    max_seq_length=config["tokenizer"]["max_length"],
 )
 
 # Add the teacher model to the trainer
