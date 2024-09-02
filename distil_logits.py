@@ -15,10 +15,11 @@ config = {
         "split": "train",                   # Use the training split
         "seed": 42                          # Random seed for reproducibility
     },
-    "models": {
-        "teacher": "bert-base-uncased",     # Teacher model (BERT)
-        "student": "distilbert-base-uncased"     # Hypothetical student model (replace with an actual smaller BERT model)
-    },
+   "models": {
+    "teacher": "bert-base-uncased",     # Teacher model (BERT)
+    "student": "distilgpt2"             # Updated student model (GPT-2)
+},
+
     "tokenizer": {
         "max_length": 512,                  # Maximum token length suitable for BERT
         "chat_template": "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
