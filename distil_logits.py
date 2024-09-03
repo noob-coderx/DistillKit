@@ -166,9 +166,18 @@ training_arguments = TrainingArguments(**config["training"])
 
 # Define SFTConfig for SFTTrainer
 sft_config = SFTConfig(
-    packing=False,  # Adjust this based on the data format
-    dataset_text_field="text"  # Make sure this matches the dataset key
-    output_dir=config["training"]["output_dir"]
+    packing=False,  # Set to True if using packed sequences
+    dataset_text_field="text",  # Match this to the key in your tokenized dataset
+    output_dir=config["training"]["output_dir"],  # Ensure this path is correct
+    gradient_checkpointing=True,  # Enable if you need to save memory
+    logging_steps=50,  # Adjust the logging frequency as needed
+    evaluation_strategy="steps",  # Define when evaluation happens, e.g., "epoch" or "steps"
+    save_strategy="steps",  # Define when to save checkpoints
+    fp16=False,  # Set True for mixed precision, set False if running on CPU
+    bf16=True,  # Set True if using bf16 precision
+    lr_scheduler_type=config["training"]["lr_scheduler_type"],  # Scheduler type, e.g., "cosine"
+    warmup_ratio=config["training"]["warmup_ratio"],  # Define warm-up strategy
+    max_seq_length=config["tokenizer"]["max_length"],  # Set max sequence length matching tokenizer
 )
 
 # Create the custom SFT Trainer
