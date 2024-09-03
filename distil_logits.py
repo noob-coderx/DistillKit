@@ -166,9 +166,8 @@ training_arguments = TrainingArguments(**config["training"])
 
 # Define SFTConfig for SFTTrainer
 sft_config = SFTConfig(
-    packing=False,  # Set packing based on your data formatting
-    dataset_text_field="text",  # This should match the key in your dataset
-    formatting_func=None  # If custom formatting is needed, define it here
+    packing=False,  # Adjust this based on the data format
+    dataset_text_field="text"  # Make sure this matches the dataset key
 )
 
 # Create the custom SFT Trainer
