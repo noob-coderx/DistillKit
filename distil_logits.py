@@ -11,43 +11,41 @@ import yaml
 config = {
     "project_name": "distil-logits",
     "dataset": {
-        "name": "mlabonne/FineTome-100k",  # Dataset to be used for distillation
-        "split": "train",                   # Use the training split
-        "seed": 42                          # Random seed for reproducibility
+        "name": "mlabonne/FineTome-100k",
+        "split": "train",
+        "seed": 42
     },
-   "models": {
-    "teacher": "bert-base-uncased",     # Teacher model (BERT)
-    "student": "distilgpt2"             # Updated student model (GPT-2)
-},
-
+    "models": {
+        "teacher": "arcee-ai/Arcee-Spark",
+        "student": "Qwen/Qwen2-1.5B"
+    },
     "tokenizer": {
-        "max_length": 512,                  # Maximum token length suitable for BERT
+        "max_length": 4096,
         "chat_template": "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
     },
     "training": {
-        "output_dir": "./results",           # Output directory to save results
-        "num_train_epochs": 3,               # Number of training epochs
-        "per_device_train_batch_size": 4,    # Batch size per device (adjust based on GPU memory)
-        "gradient_accumulation_steps": 8,    # Accumulate gradients to simulate larger batch sizes
-        "save_steps": 1000,                  # Steps interval for saving the model
-        "logging_steps": 10,                 # Logging interval
-        "learning_rate": 5e-5,               # Learning rate (adjust as needed)
-        "weight_decay": 0.01,                # Weight decay for regularization
-        "warmup_ratio": 0.1,                 # Warmup ratio for learning rate scheduler
-        "lr_scheduler_type": "linear",       # Type of learning rate scheduler
-        "resume_from_checkpoint": None,      # Resume training from checkpoint (if any)
-        "fp16": True,                        # Mixed precision training (use fp16 if GPU supports it)
-        "bf16": False                        # Turn off bf16 since fp16 is used
+        "output_dir": "./results",
+        "num_train_epochs": 3,
+        "per_device_train_batch_size": 1,
+        "gradient_accumulation_steps": 8,
+        "save_steps": 1000,
+        "logging_steps": 1,
+        "learning_rate": 2e-5,
+        "weight_decay": 0.05,
+        "warmup_ratio": 0.1,
+        "lr_scheduler_type": "cosine",
+        "resume_from_checkpoint": None,
+        "fp16": False,
+        "bf16": True
     },
     "distillation": {
-        "temperature": 2.0,                  # Temperature parameter for distillation
-        "alpha": 0.5                         # Weighting between the original and distillation losses
+        "temperature": 2.0,
+        "alpha": 0.5
     },
     "model_config": {
-        "use_flash_attention": False         # BERT typically does not use Flash Attention
+        "use_flash_attention": True
     }
 }
-
 
 # Set up environment
 os.environ['WANDB_PROJECT'] = config["project_name"]
@@ -57,8 +55,6 @@ device = accelerator.device
 # Load and preprocess dataset
 dataset = load_dataset(config["dataset"]["name"], split=config["dataset"]["split"])
 dataset = dataset.shuffle(seed=config["dataset"]["seed"])
-if "num_samples" in config["dataset"]:
-    dataset = dataset.select(range(config["dataset"]["num_samples"]))
 
 # Load tokenizers
 teacher_tokenizer = AutoTokenizer.from_pretrained(config["models"]["teacher"])
@@ -67,10 +63,11 @@ student_tokenizer = AutoTokenizer.from_pretrained(config["models"]["student"])
 # Apply chat template to student tokenizer
 student_tokenizer.chat_template = config["tokenizer"]["chat_template"]
 
+# Preprocess function
 def sharegpt_format(example):
     conversations = example['conversations']
     message = []
-    
+
     if isinstance(conversations, list):
         for conversation in conversations:
             if isinstance(conversation, dict):
@@ -108,12 +105,12 @@ if config["model_config"]["use_flash_attention"]:
 teacher_model = AutoModelForCausalLM.from_pretrained(config["models"]["teacher"], **model_kwargs)
 student_model = AutoModelForCausalLM.from_pretrained(config["models"]["student"], **model_kwargs)
 
-# Optionally freeze layers of the student model based on spectrum configuration
+# Spectrum configuration to freeze layers (Optional)
 if "spectrum" in config and "layers_to_unfreeze" in config["spectrum"]:
     def freeze_student_spectrum(model, unfrozen_layers_file):
         with open(unfrozen_layers_file, 'r') as file:
             unfrozen_layers = yaml.safe_load(file)['unfrozen_parameters']
-        
+
         for name, param in model.named_parameters():
             if not any(layer in name for layer in unfrozen_layers):
                 param.requires_grad = False
@@ -125,6 +122,7 @@ if "spectrum" in config and "layers_to_unfreeze" in config["spectrum"]:
 else:
     print("Spectrum configuration not found. All layers of the student model will be trainable.")
 
+# Logits padding function
 def pad_logits(student_logits, teacher_logits):
     student_size, teacher_size = student_logits.size(-1), teacher_logits.size(-1)
     if student_size != teacher_size:
@@ -133,11 +131,12 @@ def pad_logits(student_logits, teacher_logits):
         return (torch.cat([student_logits, pad_tensor], dim=-1), teacher_logits) if student_size < teacher_size else (student_logits, torch.cat([teacher_logits, pad_tensor], dim=-1))
     return student_logits, teacher_logits
 
+# Custom SFTTrainer class with distillation
 class LogitsTrainer(SFTTrainer):
     def compute_loss(self, model, inputs, return_outputs=False):
         inputs = {k: v.to(model.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
         self.teacher_model = self.teacher_model.to(model.device)
-        
+
         student_model = model.module if hasattr(model, 'module') else model
         teacher_model = self.teacher_model.module if hasattr(self.teacher_model, 'module') else self.teacher_model
 
@@ -150,7 +149,7 @@ class LogitsTrainer(SFTTrainer):
 
     def distillation_loss(self, student_logits, teacher_logits, inputs, original_loss):
         student_logits, teacher_logits = pad_logits(student_logits.to(self.model.device), teacher_logits.to(self.model.device))
-        
+
         student_logits_scaled = student_logits / config["distillation"]["temperature"]
         teacher_logits_scaled = teacher_logits / config["distillation"]["temperature"]
 
@@ -165,6 +164,13 @@ class LogitsTrainer(SFTTrainer):
 # Training arguments
 training_arguments = TrainingArguments(**config["training"])
 
+# Define SFTConfig for SFTTrainer
+sft_config = SFTConfig(
+    packing=False,  # Set packing based on your data formatting
+    dataset_text_field="text",  # This should match the key in your dataset
+    formatting_func=None  # If custom formatting is needed, define it here
+)
+
 # Create the custom SFT Trainer
 trainer = LogitsTrainer(
     model=student_model,
@@ -172,7 +178,7 @@ trainer = LogitsTrainer(
     eval_dataset=tokenized_dataset["test"],
     tokenizer=student_tokenizer,
     args=training_arguments,
-    max_seq_length=config["tokenizer"]["max_length"],
+    sft_config=sft_config  # Pass the SFT configuration
 )
 
 # Add the teacher model to the trainer
