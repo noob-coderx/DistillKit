@@ -11,19 +11,25 @@ import yaml
 config = {
     "project_name": "distil-multilayer",
     "dataset": {
-        "name": "mlabonne/FineTome-100k",
+        "name": "openwebtext",
         "split": "train",
         "num_samples": 1000, # You can pass a number here to limit the number of samples to use.
         "seed": 42
     },
     "models": {
-        "teacher": "arcee-ai/Arcee-Spark",
-        "student": "Qwen/Qwen2-1.5B"
+        "teacher": "gpt2-xl",  # Teacher model: GPT-2 XL, a large version of GPT-2
+        "student": "distilgpt2"  # Student model: DistilGPT-2, a distilled and smaller version of GPT-2
     },
-    "tokenizer": {
-        "max_length": 4096,
-        "chat_template": "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
-    },
+"tokenizer": {
+    "max_length": 1024,  # Adjusted to a realistic length for GPT-2 and DistilGPT-2
+    "chat_template": "{% for message in messages %}"
+                     "{% if loop.first and messages[0]['role'] != 'system' %}"
+                     "{{ 'System: You are a helpful assistant.\n' }}"
+                     "{% endif %}"
+                     "{{ message['role'].capitalize() + ': ' + message['content'] + '\n' }}"
+                     "{% endfor %}"
+                     "{% if add_generation_prompt %}Assistant: {% endif %}"
+},
     "training": {
         "output_dir": "./results",
         "num_train_epochs": 3,
