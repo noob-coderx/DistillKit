@@ -168,6 +168,7 @@ training_arguments = TrainingArguments(**config["training"])
 sft_config = SFTConfig(
     packing=False,  # Adjust this based on the data format
     dataset_text_field="text"  # Make sure this matches the dataset key
+    output_dir=config["training"]["output_dir"]
 )
 
 # Create the custom SFT Trainer
