@@ -4,32 +4,25 @@ import torch.nn.functional as F
 from datasets import load_dataset
 from trl import SFTTrainer
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
-from accelerate import Accelerator
 import yaml
 
 # Configuration
 config = {
     "project_name": "distil-multilayer",
     "dataset": {
-        "name": "openwebtext",
+        "name": "mlabonne/FineTome-100k",
         "split": "train",
-        "num_samples": 1000, # You can pass a number here to limit the number of samples to use.
+        "num_samples": 1000,  # You can pass a number here to limit the number of samples to use.
         "seed": 42
     },
     "models": {
-        "teacher": "gpt2-xl",  # Teacher model: GPT-2 XL, a large version of GPT-2
-        "student": "distilgpt2"  # Student model: DistilGPT-2, a distilled and smaller version of GPT-2
+        "teacher": "arcee-ai/Arcee-Spark",
+        "student": "Qwen/Qwen2-1.5B"
     },
-"tokenizer": {
-    "max_length": 1024,  # Adjusted to a realistic length for GPT-2 and DistilGPT-2
-    "chat_template": "{% for message in messages %}"
-                     "{% if loop.first and messages[0]['role'] != 'system' %}"
-                     "{{ 'System: You are a helpful assistant.\n' }}"
-                     "{% endif %}"
-                     "{{ message['role'].capitalize() + ': ' + message['content'] + '\n' }}"
-                     "{% endfor %}"
-                     "{% if add_generation_prompt %}Assistant: {% endif %}"
-},
+    "tokenizer": {
+        "max_length": 4096,
+        "chat_template": "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
+    },
     "training": {
         "output_dir": "./results",
         "num_train_epochs": 3,
@@ -43,8 +36,8 @@ config = {
         "warmup_ratio": 0.2,
         "lr_scheduler_type": "linear",
         "resume_from_checkpoint": None,
-        "fp16": False,
-        "bf16": True,
+        "fp16": False,  # Disable fp16 for CPU
+        "bf16": False,  # Disable bf16 for CPU
         "max_grad_norm": 1.0,
         "group_by_length": False
     },
@@ -53,16 +46,15 @@ config = {
         "alpha": 0.5
     },
     "model_config": {
-        "use_flash_attention": True
+        "use_flash_attention": False  # Flash attention is GPU-specific, disabled for CPU
     }
 }
 
 # Set up environment
 os.environ['WANDB_PROJECT'] = config["project_name"]
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
-accelerator = Accelerator()
-device = accelerator.device
+# Set the device to CPU explicitly
+device = torch.device("cpu")
 
 # Load and preprocess dataset
 dataset = load_dataset(config["dataset"]["name"], split=config["dataset"]["split"])
@@ -109,16 +101,14 @@ dataset = dataset.map(prepare_dataset, remove_columns=original_columns)
 
 print("Dataset preparation complete. Loading models...")
 
-# Load models with configurable flash attention
-model_kwargs = {"torch_dtype": torch.bfloat16 if config["training"]["bf16"] else (torch.float16 if config["training"]["fp16"] else torch.float32)}
-if config["model_config"]["use_flash_attention"]:
-    model_kwargs["attn_implementation"] = "flash_attention_2"
-
+# Load models with CPU settings
+model_kwargs = {"torch_dtype": torch.float32}  # Use float32 for CPU compatibility
 teacher_model = AutoModelForCausalLM.from_pretrained(config["models"]["teacher"], **model_kwargs).to(device)
 student_model = AutoModelForCausalLM.from_pretrained(config["models"]["student"], **model_kwargs).to(device)
 
+# Define MultiLayerAdaptationLayer
 class MultiLayerAdaptationLayer(torch.nn.Module):
-    def __init__(self, student_dim, teacher_dim, num_student_layers, num_teacher_layers, dtype=torch.bfloat16):
+    def __init__(self, student_dim, teacher_dim, num_student_layers, num_teacher_layers, dtype=torch.float32):
         super().__init__()
         self.projections = torch.nn.ModuleList([
             torch.nn.Linear(student_dim, teacher_dim, dtype=dtype)
@@ -141,14 +131,16 @@ class MultiLayerAdaptationLayer(torch.nn.Module):
             adapted_hidden_states.append(self.projections[i](hidden_state.to(self.dtype)))
         return adapted_hidden_states
 
+# Instantiate adaptation layer
 adaptation_layer = MultiLayerAdaptationLayer(
     student_model.config.hidden_size,
     teacher_model.config.hidden_size,
     student_model.config.num_hidden_layers,
     teacher_model.config.num_hidden_layers,
-    dtype=torch.bfloat16
+    dtype=torch.float32
 ).to(device)
 
+# Define CustomSFTTrainer
 class CustomSFTTrainer(SFTTrainer):
     def __init__(self, *args, **kwargs):
         self.remove_unused_columns = kwargs.pop('remove_unused_columns', None)
@@ -161,13 +153,12 @@ class CustomSFTTrainer(SFTTrainer):
             "attention_mask": inputs["attention_mask"],
         }
 
-        labels = inputs["labels"]
+        labels = inputs["input_ids"]
 
         student_outputs = model(**student_inputs, labels=labels, output_hidden_states=True)
         
         original_loss = student_outputs.loss
 
-        self.teacher_model = self.teacher_model
         teacher_model = self.teacher_model.module if hasattr(self.teacher_model, 'module') else self.teacher_model
 
         with torch.no_grad():
@@ -195,7 +186,6 @@ class CustomSFTTrainer(SFTTrainer):
             if adapted_student_hidden_states[student_hidden].shape != teacher_hidden.shape:
                 raise ValueError(f"Shape mismatch: student {adapted_student_hidden_states[student_hidden].shape} vs teacher {teacher_hidden.shape}")
 
-            student_probs = F.softmax(adapted_student_hidden_states[student_hidden] / config["distillation"]["temperature"], dim=-1)
             teacher_probs = F.softmax(teacher_hidden / config["distillation"]["temperature"], dim=-1)
 
             loss_kd = F.kl_div(
@@ -214,7 +204,6 @@ class CustomSFTTrainer(SFTTrainer):
         return total_loss
 
 # Training arguments
-# Training arguments
 training_arguments = TrainingArguments(
     **config["training"],
     remove_unused_columns=False,
@@ -230,20 +219,15 @@ trainer = CustomSFTTrainer(
     packing=config["training"].get("packing", False),
 )
 
-# Add these attributes to the trainer
+# Add necessary attributes to the trainer
 trainer.teacher_model = teacher_model
 trainer.adaptation_layer = adaptation_layer
 trainer.student_tokenizer = student_tokenizer
 trainer.teacher_tokenizer = teacher_tokenizer
 
-# Prepare for distributed training
-trainer = accelerator.prepare(trainer)
-
 # Train the model
 trainer.train(resume_from_checkpoint=config["training"]["resume_from_checkpoint"])
 
-# Save the final model
+# Save the final model and adaptation layer
 trainer.save_model(config["training"]["output_dir"])
-
-# Save the adaptation layer
 torch.save(adaptation_layer.state_dict(), os.path.join(config["training"]["output_dir"], "adaptation_layer.pth"))
