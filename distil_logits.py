@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
-from trl import SFTTrainer, SFTConfig
+from trl import SFTTrainer
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 from accelerate import Accelerator
 import yaml
@@ -162,32 +162,31 @@ class LogitsTrainer(SFTTrainer):
         return config["distillation"]["alpha"] * loss_kd + (1 - config["distillation"]["alpha"]) * original_loss
 
 # Training arguments
-training_arguments = TrainingArguments(**config["training"])
-
-# Define SFTConfig for SFTTrainer
-sft_config = SFTConfig(
-    packing=False,  # Set to True if using packed sequences
-    dataset_text_field="text",  # Match this to the key in your tokenized dataset
-    output_dir=config["training"]["output_dir"],  # Ensure this path is correct
-    gradient_checkpointing=True,  # Enable if you need to save memory
-    logging_steps=50,  # Adjust the logging frequency as needed
-    evaluation_strategy="steps",  # Define when evaluation happens, e.g., "epoch" or "steps"
-    save_strategy="steps",  # Define when to save checkpoints
-    fp16=False,  # Set True for mixed precision, set False if running on CPU
-    bf16=True,  # Set True if using bf16 precision
-    lr_scheduler_type=config["training"]["lr_scheduler_type"],  # Scheduler type, e.g., "cosine"
-    warmup_ratio=config["training"]["warmup_ratio"],  # Define warm-up strategy
-    max_seq_length=config["tokenizer"]["max_length"],  # Set max sequence length matching tokenizer
+training_arguments = TrainingArguments(
+    output_dir=config["training"]["output_dir"],
+    num_train_epochs=config["training"]["num_train_epochs"],
+    per_device_train_batch_size=config["training"]["per_device_train_batch_size"],
+    gradient_accumulation_steps=config["training"]["gradient_accumulation_steps"],
+    save_steps=config["training"]["save_steps"],
+    logging_steps=config["training"]["logging_steps"],
+    learning_rate=config["training"]["learning_rate"],
+    weight_decay=config["training"]["weight_decay"],
+    warmup_ratio=config["training"]["warmup_ratio"],
+    lr_scheduler_type=config["training"]["lr_scheduler_type"],
+    fp16=config["training"]["fp16"],
+    bf16=config["training"]["bf16"],
+    evaluation_strategy="steps",
+    save_strategy="steps",
+    gradient_checkpointing=True,
 )
 
-# Create the custom SFT Trainer
+# Create the custom Logits Trainer
 trainer = LogitsTrainer(
     model=student_model,
     train_dataset=tokenized_dataset["train"],
     eval_dataset=tokenized_dataset["test"],
     tokenizer=student_tokenizer,
     args=training_arguments,
-    sft_config=sft_config  # Pass the SFT configuration
 )
 
 # Add the teacher model to the trainer
