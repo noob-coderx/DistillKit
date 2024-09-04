@@ -191,7 +191,10 @@ if config["distillation"]["precompute_logits"]:
 
     # Load the dataset with teacher logits
     logits_dataset = load_dataset(config['dataset']['logits_save_path'])
-	@@ -152,20 +200,38 @@ def freeze_student_spectrum(model, unfrozen_layers_file):
+    # Add teacher logits to the original tokenized dataset
+    tokenized_dataset = tokenized_dataset.add_column(
+        'teacher_logits', logits_dataset['train']['teacher_logits']
+    )
 # Split the dataset
 tokenized_dataset = tokenized_dataset.train_test_split(test_size=0.1)
 
@@ -230,7 +233,10 @@ class LogitsTrainer(SFTTrainer):
             teacher_logits = inputs['teacher_logits']
         else:
             # Otherwise, compute them on-the-fly
-	@@ -176,47 +242,84 @@ def compute_loss(self, model, inputs, return_outputs=False):
+            with torch.no_grad():
+                self.teacher_model = self.teacher_model.to(model.device)
+                teacher_outputs = self.teacher_model(**inputs)
+                teacher_logits = teacher_outputs.logits
 
         student_outputs = model(**inputs)
 
