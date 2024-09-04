@@ -37,15 +37,15 @@ config = {
         "resume_from_checkpoint": None,
         "fp16": False,
         "bf16": True,
-        "eval_strategy": "steps",
-        "use_cache": False,  # Disable caching to avoid gradient checkpointing conflict
+        "eval_strategy": "steps"
     },
     "distillation": {
         "temperature": 2.0,
         "alpha": 0.5
     },
     "model_config": {
-        "use_flash_attention": True
+        "use_flash_attention": True,
+        "use_cache": False  # Set this directly in the model
     }
 }
 
@@ -99,8 +99,8 @@ tokenized_dataset = tokenized_dataset.train_test_split(test_size=0.1)
 
 print("Dataset preparation complete. Loading models...")
 
-# Load models with configurable flash attention
-model_kwargs = {"torch_dtype": torch.bfloat16}
+# Load models with configurable flash attention and cache settings
+model_kwargs = {"torch_dtype": torch.bfloat16, "use_cache": config["model_config"]["use_cache"]}
 if config["model_config"]["use_flash_attention"]:
     model_kwargs["attn_implementation"] = "flash_attention_2"
 
@@ -163,7 +163,7 @@ class LogitsTrainer(SFTTrainer):
 
         return config["distillation"]["alpha"] * loss_kd + (1 - config["distillation"]["alpha"]) * original_loss
 
-# Training arguments
+# Training arguments without `use_cache`
 training_arguments = TrainingArguments(
     output_dir=config["training"]["output_dir"],
     num_train_epochs=config["training"]["num_train_epochs"],
@@ -179,8 +179,7 @@ training_arguments = TrainingArguments(
     bf16=config["training"]["bf16"],
     eval_strategy=config["training"]["eval_strategy"],
     save_strategy="steps",
-    gradient_checkpointing=True,
-    use_cache=config["training"]["use_cache"],  # Ensure cache is set correctly
+    gradient_checkpointing=True
 )
 
 # SFT Config with proper initialization
@@ -197,10 +196,10 @@ trainer = LogitsTrainer(
     tokenizer=student_tokenizer,
     teacher_model=teacher_model,
     sft_config=sft_config,
-    formatting_func=None,  # Adjust to align with changes
+    formatting_func=None,
     max_seq_length=config["tokenizer"]["max_length"],
     callbacks=None,
-    dataset_text_field="input_ids",  # Retained for now; adjust as per latest SFTTrainer standards
+    dataset_text_field="input_ids"
 )
 
 # Start training
