@@ -19,11 +19,11 @@ config = {
         'split': 'train',
         # "num_samples": , # You can pass a number here to limit the number of samples to use.
         'seed': 42,
-        'logits_save_path': 'path/to/save/logits_dataset',
+        'logits_save_path': '/home/shikhar/DistillKit/logits',
     },
-    'models': {
-       "teacher": "/workspace/DistillKit/models/nova",
-        "student": "/workspace/DistillKit/models/spark"
+    "models": {
+        "teacher": "arcee-ai/Arcee-Spark",
+        "student": "Qwen/Qwen2-1.5B"
     },
     'tokenizer': {
         'max_length': 4096,
