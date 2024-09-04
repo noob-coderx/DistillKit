@@ -36,7 +36,8 @@ config = {
         "lr_scheduler_type": "cosine",
         "resume_from_checkpoint": None,
         "fp16": False,
-        "bf16": True
+        "bf16": True,
+        "eval_strategy": "steps"
     },
     "distillation": {
         "temperature": 2.0,
@@ -175,7 +176,7 @@ training_arguments = TrainingArguments(
     lr_scheduler_type=config["training"]["lr_scheduler_type"],
     fp16=config["training"]["fp16"],
     bf16=config["training"]["bf16"],
-    evaluation_strategy="steps",
+    eval_strategy=config["training"]["eval_strategy"],
     save_strategy="steps",
     gradient_checkpointing=True,
 )
@@ -187,16 +188,13 @@ trainer = LogitsTrainer(
     eval_dataset=tokenized_dataset["test"],
     tokenizer=student_tokenizer,
     args=training_arguments,
+    dataset_text_field="text",  # Specify the text field for the dataset
+    packing=False,  # This was not previously set, adjusted now
+    formatting_func=sharegpt_format  # Set the formatting function explicitly
 )
 
 # Add the teacher model to the trainer
 trainer.teacher_model = teacher_model
 
-# Prepare for distributed training
-trainer = accelerator.prepare(trainer)
-
-# Train the model
-trainer.train(resume_from_checkpoint=config["training"]["resume_from_checkpoint"])
-
-# Save the final model
-trainer.save_model(config["training"]["output_dir"])
+# Start training
+trainer.train()
