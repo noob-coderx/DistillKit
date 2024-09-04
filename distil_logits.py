@@ -185,6 +185,7 @@ training_arguments = TrainingArguments(
 # SFT Config with proper initialization
 sft_config = SFTConfig(
     dataset_text_field="input_ids",
+    output_dir=config["training"]["output_dir"]  # Set output directory here
 )
 
 # Initialize trainer
