@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 from accelerate import Accelerator
 import yaml
@@ -37,7 +37,8 @@ config = {
         "resume_from_checkpoint": None,
         "fp16": False,
         "bf16": True,
-        "eval_strategy": "steps"
+        "eval_strategy": "steps",
+        "use_cache": False,  # Disable caching to avoid gradient checkpointing conflict
     },
     "distillation": {
         "temperature": 2.0,
@@ -179,22 +180,28 @@ training_arguments = TrainingArguments(
     eval_strategy=config["training"]["eval_strategy"],
     save_strategy="steps",
     gradient_checkpointing=True,
+    use_cache=config["training"]["use_cache"],  # Ensure cache is set correctly
 )
 
-# Create the custom Logits Trainer
+# SFT Config with proper initialization
+sft_config = SFTConfig(
+    dataset_text_field="input_ids",
+)
+
+# Initialize trainer
 trainer = LogitsTrainer(
     model=student_model,
+    args=training_arguments,
     train_dataset=tokenized_dataset["train"],
     eval_dataset=tokenized_dataset["test"],
     tokenizer=student_tokenizer,
-    args=training_arguments,
-    dataset_text_field="text",  # Specify the text field for the dataset
-    packing=False,  # This was not previously set, adjusted now
-    formatting_func=sharegpt_format  # Set the formatting function explicitly
+    teacher_model=teacher_model,
+    sft_config=sft_config,
+    formatting_func=None,  # Adjust to align with changes
+    max_seq_length=config["tokenizer"]["max_length"],
+    callbacks=None,
+    dataset_text_field="input_ids",  # Retained for now; adjust as per latest SFTTrainer standards
 )
-
-# Add the teacher model to the trainer
-trainer.teacher_model = teacher_model
 
 # Start training
 trainer.train()
